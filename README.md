@@ -1,5 +1,3 @@
-<![CDATA[<div align="center">
-
 # 📝 Revisor de Tesis
 
 **Plataforma inteligente de revisión y evaluación de tesis universitarias**
@@ -401,11 +399,7 @@ Este proyecto está bajo la Licencia MIT. Ver el archivo [LICENSE](LICENSE) para
 
 ---
 
-<div align="center">
-
 Hecho con ❤️ para la Universidad Nacional de Trujillo
 
 **Diego Vásquez** · [dvasquezm@unitru.edu.pe](mailto:dvasquezm@unitru.edu.pe)
 
-</div>
-]]>
