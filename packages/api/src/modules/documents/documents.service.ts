@@ -20,44 +20,56 @@ export class DocumentsService {
     projectId: string,
     file: Express.Multer.File,
   ) {
-    // Validar tipo de archivo
+    // 1. Validaciones iniciales
+    if (!file) {
+      throw new BadRequestException('Archivo no provisto.');
+    }
+
     if (!FILE_CONFIG.ALLOWED_MIME_TYPES.includes(file.mimetype as any)) {
       throw new BadRequestException(
         `Tipo de archivo no permitido. Permitidos: ${FILE_CONFIG.ALLOWED_EXTENSIONS.join(', ')}`,
       );
     }
 
-    // Validar tamaño
     if (file.size > FILE_CONFIG.MAX_FILE_SIZE) {
       throw new BadRequestException('El archivo excede el tamaño máximo de 50MB');
     }
 
-    // Verificar que el proyecto existe
     const project = await this.prisma.thesisProject.findUnique({
       where: { id: projectId },
     });
     if (!project) throw new NotFoundException('Proyecto no encontrado');
 
-    // Subir a MinIO
-    const fileKey = await this.minio.uploadDocument(
-      file.originalname,
-      file.buffer,
-      file.mimetype,
-    );
+    // 2. Subir a MinIO
+    let fileKey: string;
+    try {
+      fileKey = await this.minio.uploadDocument(
+        file.originalname,
+        file.buffer,
+        file.mimetype,
+      );
+    } catch (error: any) {
+      throw new BadRequestException(`Fallo en el servicio de almacenamiento (MinIO): ${error.message}`);
+    }
 
-    // Crear registro en BD
-    const submission = await this.prisma.documentSubmission.create({
-      data: {
-        projectId,
-        fileName: file.originalname,
-        fileKey,
-        fileSize: file.size,
-        mimeType: file.mimetype,
-        status: 'EXTRACTING',
-      },
-    });
+    // 3. Crear registro en base de datos
+    let submission;
+    try {
+      submission = await this.prisma.documentSubmission.create({
+        data: {
+          projectId,
+          fileName: file.originalname,
+          fileKey,
+          fileSize: file.size,
+          mimeType: file.mimetype,
+          status: 'EXTRACTING',
+        },
+      });
+    } catch (error: any) {
+      throw new BadRequestException(`Fallo al registrar la entrega en base de datos: ${error.message}`);
+    }
 
-    // Extraer texto del documento
+    // 4. Extraer texto y encolar
     try {
       const extractedText = await this.extractText(file.buffer, file.mimetype);
 
@@ -91,15 +103,61 @@ export class DocumentsService {
           backoff: { type: 'exponential', delay: 5000 },
         },
       );
-    } catch (error) {
-      await this.prisma.documentSubmission.update({
-        where: { id: submission.id },
-        data: { status: 'ERROR' },
-      });
-      throw new BadRequestException(`Error extrayendo texto: ${(error as Error).message}`);
+    } catch (error: any) {
+      try {
+        await this.prisma.documentSubmission.update({
+          where: { id: submission.id },
+          data: { status: 'ERROR' },
+        });
+      } catch (dbError) {
+        console.error('No se pudo actualizar el estado de la entrega a ERROR:', dbError);
+      }
+      throw new BadRequestException(`Error extrayendo texto: ${error.message}`);
     }
 
     return submission;
+  }
+
+  async findAll(userId: string, userRole: string, page = 1, limit = 20) {
+    const where: any = {};
+    if (userRole === 'STUDENT') {
+      where.project = { studentId: userId };
+    } else if (userRole === 'ADVISOR') {
+      where.project = { advisorId: userId };
+    } else if (userRole === 'COORDINATOR') {
+      where.project = { coordinatorId: userId };
+    }
+
+    const [submissions, total] = await Promise.all([
+      this.prisma.documentSubmission.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          _count: {
+            select: {
+              findings: true,
+              plagiarismAlerts: true,
+              citationValidations: true,
+            },
+          },
+        },
+        orderBy: { submittedAt: 'desc' },
+      }),
+      this.prisma.documentSubmission.count({ where }),
+    ]);
+
+    return {
+      data: submissions.map((s) => ({
+        ...s,
+        findingsCount: s._count.findings,
+        plagiarismAlertsCount: s._count.plagiarismAlerts,
+        citationsCount: s._count.citationValidations,
+        _count: undefined,
+        extractedText: undefined,
+      })),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async findByProject(projectId: string, page = 1, limit = 20) {
@@ -192,19 +250,29 @@ export class DocumentsService {
   // ─── Extracción de texto ──────────────────────────────────
 
   private async extractText(buffer: Buffer, mimeType: string): Promise<string> {
-    if (mimeType === 'application/pdf') {
-      const data = await pdfParse(buffer);
-      return data.text;
-    }
+    try {
+      if (mimeType === 'application/pdf') {
+        const data = await pdfParse(buffer);
+        if (!data || typeof data.text !== 'string') {
+          throw new Error('El archivo PDF no contiene texto legible.');
+        }
+        return data.text;
+      }
 
-    if (
-      mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-      mimeType === 'application/msword'
-    ) {
-      const result = await mammoth.extractRawText({ buffer });
-      return result.value;
-    }
+      if (
+        mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        mimeType === 'application/msword'
+      ) {
+        const result = await mammoth.extractRawText({ buffer });
+        if (!result || typeof result.value !== 'string') {
+          throw new Error('El documento Word no contiene texto legible.');
+        }
+        return result.value;
+      }
 
-    throw new BadRequestException('Tipo de archivo no soportado para extracción de texto');
+      throw new BadRequestException('Tipo de archivo no soportado para extracción de texto');
+    } catch (error: any) {
+      throw new Error(`Fallo en lectura de formato: ${error.message}`);
+    }
   }
 }

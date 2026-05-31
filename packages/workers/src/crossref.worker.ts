@@ -17,6 +17,25 @@ interface ExtractedCitation {
   doi?: string;
 }
 
+function cleanAndParseJSON(rawJson: string): any {
+  // Sanitización de Cadenas LLM para evitar Bad control character in string literal
+  const sanitized = rawJson.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+
+  try {
+    return JSON.parse(sanitized);
+  } catch (err: any) {
+    // Reintentar reemplazando comillas tipográficas
+    try {
+      const moreSanitized = sanitized
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/[\u2018\u2019]/g, "'");
+      return JSON.parse(moreSanitized);
+    } catch (innerErr: any) {
+      throw new Error(`${innerErr.message}. JSON resultante: ${sanitized.substring(0, 300)}...`);
+    }
+  }
+}
+
 export function startCrossrefWorker(prisma: PrismaClient, connection: IORedis) {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
   const mailto = process.env.CROSSREF_MAILTO || 'test@universidad.edu.pe';
@@ -33,14 +52,22 @@ export function startCrossrefWorker(prisma: PrismaClient, connection: IORedis) {
 
       try {
         // 1. Extraer citas usando Gemini
-        const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite' });
+        const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' });
         const refSection = documentText.substring(documentText.length - 8000);
         const prompt = GEMINI_PROMPTS.EXTRACT_CITATIONS(refSection);
         const result = await model.generateContent(prompt);
         const responseText = result.response.text();
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) throw new Error('No se pudieron extraer citas');
-        const parsed = JSON.parse(jsonMatch[0]);
+        if (!jsonMatch) throw new Error('La respuesta de Gemini no contiene JSON válido para citas');
+        
+        let parsed: any;
+        try {
+          parsed = cleanAndParseJSON(jsonMatch[0]);
+        } catch (parseError: any) {
+          console.error(`❌ [CrossRef] Falló el parseo JSON de citas: ${parseError.message}`);
+          throw new Error(`Error parseando respuesta de Gemini: ${parseError.message}`);
+        }
+
         const citations: ExtractedCitation[] = parsed.citations || [];
         console.log(`   📖 ${citations.length} citas extraídas`);
 

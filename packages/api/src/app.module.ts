@@ -15,6 +15,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { StorageModule } from './modules/storage/storage.module';
 import { OrcidController } from './modules/orcid/orcid.controller';
 import { OrcidService } from './modules/orcid/orcid.service';
+import { GeneratorModule } from './modules/generator/generator.module';
 
 
 @Module({
@@ -49,6 +50,7 @@ import { OrcidService } from './modules/orcid/orcid.service';
     CitationsModule,
     DashboardModule,
     NotificationsModule,
+    GeneratorModule,
   ],
   // Registramos el controlador para abrir la ruta y el servicio para la lógica
   controllers: [

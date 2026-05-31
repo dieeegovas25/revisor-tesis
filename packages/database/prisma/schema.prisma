@@ -347,3 +347,20 @@ model Notification {
   @@index([isRead])
   @@map("notifications")
 }
+
+// ─── THESIS GENERATOR BORRADOR ──────────────────────────────
+model Thesis {
+  id                String    @id @default(uuid())
+  title             String    @db.VarChar(500)
+  lineOfResearch    String    @map("line_of_research") @db.VarChar(300)
+  campus            String    @db.VarChar(100)
+  authorName        String    @map("author_name") @db.VarChar(300)
+  advisorName       String    @map("advisor_name") @db.VarChar(300)
+  status            JobStatus @default(PENDING)
+  structuredContent String?   @map("structured_content") @db.LongText
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@map("thesis")
+}
+

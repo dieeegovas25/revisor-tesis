@@ -1,11 +1,7 @@
 // Función dinámica para detectar la IP o usar localhost
 const getApiUrl = () => {
-  if (typeof window !== 'undefined') {
-    // Si estamos en el navegador (PC o Celular), usamos el mismo host pero en el puerto del backend (3001)
-    return `http://${window.location.hostname}:3001/api`;
-  }
-  // Fallback por defecto para cuando corre en el servidor de Next.js
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+  // Siempre usamos la ruta relativa definida en el .env (que ahora es /api)
+  return process.env.NEXT_PUBLIC_API_URL || '/api';
 };
 
 interface FetchOptions extends RequestInit {

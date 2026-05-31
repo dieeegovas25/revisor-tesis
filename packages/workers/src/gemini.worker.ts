@@ -10,15 +10,28 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import IORedis from 'ioredis';
 import { QUEUES, GEMINI_PROMPTS, RATE_LIMITS } from '@revisor-tesis/shared';
 
+// Helper de logueo descriptivo compatible con la firma de NestJS Logger
+const Logger = {
+  error: (message: string, error?: any) => {
+    console.error(`[NestJS-Style] [ERROR] ❌ [Gemini Worker] ${message}`, error ? error : '');
+  },
+  warn: (message: string) => {
+    console.warn(`[NestJS-Style] [WARN] ⚠️ [Gemini Worker] ${message}`);
+  },
+  log: (message: string) => {
+    console.log(`[NestJS-Style] [INFO] 🤖 [Gemini Worker] ${message}`);
+  }
+};
+
 export function startGeminiWorker(prisma: PrismaClient, connection: IORedis) {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-  const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+  const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
   const worker = new Worker(
     QUEUES.GEMINI_REVIEW,
     async (job) => {
       const { submissionId, projectId } = job.data;
-      console.log(`🤖 [Gemini] Analizando documento ${submissionId}`);
+      Logger.log(`Analizando documento ${submissionId} (Intento: ${job.attemptsMade + 1}/${job.opts.attempts || 1})`);
 
       // Actualizar estado
       await prisma.aiReviewJob.updateMany({
@@ -47,21 +60,23 @@ export function startGeminiWorker(prisma: PrismaClient, connection: IORedis) {
         if (submission.project?.pattern?.structure) {
           // Si el proyecto ya tiene un patrón explícitamente enlazado
           patternStructure = submission.project.pattern.structure;
-          console.log(`📌 Usando patrón del proyecto: ${submission.project.pattern.name}`);
+          Logger.log(`Usando patrón del proyecto: ${submission.project.pattern.name}`);
         } else {
           // BÚSQUEDA GLOBAL: Si no tiene, agarramos la Rúbrica oficial
           try {
-            // Usamos 'as any' para esquivar el falso error de TS en el monorepo
-            const defaultPattern = await (prisma as any).pattern.findFirst({
+            const defaultPattern = await prisma.documentPattern.findFirst({
+              where: { isDefault: true },
               orderBy: { createdAt: 'desc' }
             });
 
             if (defaultPattern && defaultPattern.structure) {
               patternStructure = defaultPattern.structure;
-              console.log(`📌 Usando patrón global por defecto: ${defaultPattern.name}`);
+              Logger.log(`Usando patrón global por defecto: ${defaultPattern.name}`);
+            } else {
+              Logger.warn("No se encontró ningún patrón configurado como predeterminado en la base de datos.");
             }
-          } catch (e) {
-            console.log("⚠️ No se pudo obtener el patrón por defecto.");
+          } catch (e: any) {
+            Logger.warn(`No se pudo obtener el patrón por defecto de la base de datos: ${e.message}`);
           }
         }
 
@@ -122,7 +137,7 @@ export function startGeminiWorker(prisma: PrismaClient, connection: IORedis) {
           data: { status: 'COMPLETED', completedAt: new Date() },
         });
 
-        console.log(`✅ [Gemini] Análisis completado: ${review.findings?.length || 0} hallazgos, nota: ${review.overallScore}`);
+        Logger.log(`Análisis completado: ${review.findings?.length || 0} hallazgos, nota: ${review.overallScore}`);
 
         // 8. Encolar extracción de citas y notificación
         const crossrefQueue = new Queue(QUEUES.CROSSREF, { connection });
@@ -149,24 +164,39 @@ export function startGeminiWorker(prisma: PrismaClient, connection: IORedis) {
         return { findings: review.findings?.length || 0, score: review.overallScore };
 
       } catch (error: any) {
-        // Manejar rate limiting de Gemini
-        if (error.message?.includes('429') || error.message?.includes('RESOURCE_EXHAUSTED')) {
-          console.warn('⚠️ [Gemini] Rate limit alcanzado, reintentando...');
+        const isQuotaError = error.message?.includes('429') || 
+                             error.message?.includes('RESOURCE_EXHAUSTED') ||
+                             error.message?.toLowerCase().includes('quota exceeded') ||
+                             error.message?.toLowerCase().includes('too many requests');
+
+        if (isQuotaError) {
+          Logger.warn(`Límite de cuota / Rate limit (429) detectado en Gemini para el documento ${submissionId}. Se reintentará con backoff exponencial. Detalles: ${error.message}`);
           await prisma.aiReviewJob.updateMany({
             where: { submissionId, jobType: 'gemini' },
             data: { status: 'RATE_LIMITED', lastError: error.message },
           });
-          throw error; // BullMQ reintentará con backoff
+        } else {
+          Logger.error(`Error de ejecución en Gemini para el documento ${submissionId}. Mensaje: ${error.message}`, error);
+          await prisma.aiReviewJob.updateMany({
+            where: { submissionId, jobType: 'gemini' },
+            data: {
+              status: 'FAILED',
+              lastError: error.message,
+              completedAt: new Date(),
+            },
+          });
         }
 
-        await prisma.aiReviewJob.updateMany({
-          where: { submissionId, jobType: 'gemini' },
-          data: {
-            status: 'FAILED',
-            lastError: error.message,
-            completedAt: new Date(),
-          },
-        });
+        // Si es el último intento fallido de BullMQ, forzamos estado ERROR en el documento
+        const isFinalAttempt = job.attemptsMade >= (job.opts.attempts || 1);
+        if (isFinalAttempt) {
+          Logger.error(`Se han agotado todos los intentos de reintento (${job.opts.attempts || 1}) en BullMQ para el documento ${submissionId}. Marcando documento con estado terminal ERROR.`);
+          await prisma.documentSubmission.update({
+            where: { id: submissionId },
+            data: { status: 'ERROR' },
+          }).catch((dbErr: any) => Logger.error(`Fallo al actualizar el estado del documento a ERROR en BD: ${dbErr.message}`, dbErr));
+        }
+
         throw error;
       }
     },
@@ -180,9 +210,27 @@ export function startGeminiWorker(prisma: PrismaClient, connection: IORedis) {
     },
   );
 
-  worker.on('failed', (job, error) => {
-    console.error(`❌ [Gemini] Job ${job?.id} falló:`, error.message);
+  worker.on('failed', async (job, error) => {
+    Logger.error(`Job de análisis con Gemini ${job?.id} falló definitivamente: ${error.message}`, error);
+    if (job) {
+      const { submissionId } = job.data;
+      const isFinalAttempt = job.attemptsMade >= (job.opts.attempts || 1);
+      if (isFinalAttempt) {
+        Logger.error(`[onFailed Handler] Reintentos agotados. Asegurando estado ERROR en BD para el documento ${submissionId}.`);
+        
+        await prisma.documentSubmission.update({
+          where: { id: submissionId },
+          data: { status: 'ERROR' },
+        }).catch((dbErr: any) => Logger.error(`No se pudo actualizar el estado del documento a ERROR en el handler 'failed': ${dbErr.message}`, dbErr));
+
+        await prisma.aiReviewJob.updateMany({
+          where: { submissionId, jobType: 'gemini' },
+          data: { status: 'FAILED', lastError: error.message, completedAt: new Date() },
+        }).catch((dbErr: any) => Logger.error(`No se pudo actualizar el estado de aiReviewJob a FAILED en el handler 'failed': ${dbErr.message}`, dbErr));
+      }
+    }
   });
 
-  console.log(`   ✅ Gemini Worker iniciado (modelo: ${modelName}, límite: ${RATE_LIMITS.GEMINI_RPM} RPM)`);
+  Logger.log(`Gemini Worker iniciado (modelo: ${modelName}, límite: ${RATE_LIMITS.GEMINI_RPM} RPM)`);
 }
+

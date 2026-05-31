@@ -9,6 +9,7 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -22,18 +23,65 @@ import { Roles } from '../../common/decorators/roles.decorator';
 export class DocumentsController {
   constructor(private documentsService: DocumentsService) {}
 
+  @Get()
+  async findAll(
+    @CurrentUser() user: any,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    const result = await this.documentsService.findAll(user.id, user.role, page, limit);
+    return { success: true, ...result };
+  }
+
   @Post('upload/:projectId')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 50 * 1024 * 1024 } }))
+  @UseGuards(RolesGuard)
+  @Roles('STUDENT', 'ADVISOR', 'COORDINATOR', 'ADMIN')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 50 * 1024 * 1024 },
+      fileFilter: (req, file, callback) => {
+        const allowedMimeTypes = [
+          'application/pdf',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/msword',
+        ];
+        if (allowedMimeTypes.includes(file.mimetype)) {
+          callback(null, true);
+        } else {
+          callback(
+            new BadRequestException(
+              `Tipo de archivo no permitido: ${file.mimetype}. Permitidos: PDF, DOCX, DOC`,
+            ),
+            false,
+          );
+        }
+      },
+    }),
+  )
   async upload(
     @Param('projectId') projectId: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    const submission = await this.documentsService.uploadDocument(projectId, file);
-    return {
-      success: true,
-      data: submission,
-      message: 'Documento subido exitosamente. El análisis IA se ha encolado.',
-    };
+    try {
+      if (!file) {
+        throw new BadRequestException('No se ha proporcionado ningún archivo o el formato no es válido.');
+      }
+      const submission = await this.documentsService.uploadDocument(projectId, file);
+      return {
+        success: true,
+        data: submission,
+        message: 'Documento subido exitosamente. El análisis IA se ha encolado.',
+      };
+    } catch (error: any) {
+      const filename = file ? file.originalname : 'Archivo desconocido';
+      throw new BadRequestException({
+        success: false,
+        message: `Error al procesar el archivo "${filename}": ${error.message}`,
+        error: 'Bad Request',
+        statusCode: 400,
+        failedFile: filename,
+      });
+    }
   }
 
   @Get('project/:projectId')

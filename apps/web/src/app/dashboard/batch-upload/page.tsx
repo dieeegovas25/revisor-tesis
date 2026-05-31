@@ -29,14 +29,15 @@ export default function BatchUploadPage() {
         // Usamos un bucle for...of para enviarlos de forma ordenada
         for (const file of files) {
             try {
-                await uploadFile('/documents', file);
+                // Le pasamos el archivo crudo, api-client lo empaquetará
+                await uploadFile('/thesis', file);
+
                 uploadResults.push({ name: file.name, status: 'success' as const });
             } catch (error) {
                 console.error(`Error subiendo ${file.name}:`, error);
                 uploadResults.push({ name: file.name, status: 'error' as const });
             }
 
-            // Actualizamos el estado para que el usuario vea el progreso en vivo
             setResults([...uploadResults]);
         }
 

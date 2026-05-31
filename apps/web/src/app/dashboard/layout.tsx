@@ -6,13 +6,14 @@ import { useRouter, usePathname } from 'next/navigation';
 import {
   LayoutDashboard, FolderKanban, FileUp, BookTemplate, Shield,
   BookCheck, Users, Bell, LogOut, Menu, X, GraduationCap, Moon, Sun,
-  BarChart, Settings, ListPlus, Award
+  BarChart, Settings, ListPlus, Award, Sparkles
 } from 'lucide-react';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['ADMIN', 'COORDINATOR', 'ADVISOR', 'STUDENT'] },
   { href: '/dashboard/projects', label: 'Proyectos', icon: FolderKanban, roles: ['ADMIN', 'COORDINATOR', 'ADVISOR', 'STUDENT'] },
   { href: '/dashboard/documents', label: 'Documentos', icon: FileUp, roles: ['ADMIN', 'COORDINATOR', 'ADVISOR', 'STUDENT'] },
+  { href: '/dashboard/generator', label: 'Redactor IA', icon: Sparkles, roles: ['ADMIN', 'COORDINATOR', 'ADVISOR', 'STUDENT'] },
   { href: '/dashboard/batch-upload', label: 'Lotes', icon: ListPlus, roles: ['ADMIN', 'COORDINATOR', 'ADVISOR'] },
   { href: '/dashboard/patterns', label: 'Patrones', icon: BookTemplate, roles: ['ADMIN', 'COORDINATOR'] },
   { href: '/dashboard/plagiarism', label: 'Plagio', icon: Shield, roles: ['ADMIN', 'COORDINATOR', 'ADVISOR'] },

@@ -11,44 +11,77 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
   VECTORIZING: { label: 'Vectorizando', color: 'badge-minor', icon: Clock },
   ANALYZING: { label: 'Analizando IA', color: 'badge-major', icon: Clock },
   REVIEWED: { label: 'Revisado', color: 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 px-3 py-1 rounded-full text-xs font-semibold', icon: CheckCircle2 },
-  ERROR: { label: 'Error', color: 'badge-critical', icon: XCircle },
+  ERROR: { label: 'Error en el Análisis', color: 'text-rose-600 bg-rose-100 dark:bg-rose-900/30 dark:text-rose-400 px-3 py-1 rounded-full text-xs font-semibold', icon: XCircle },
+  FAILED: { label: 'Error en el Análisis', color: 'text-rose-600 bg-rose-100 dark:bg-rose-900/30 dark:text-rose-400 px-3 py-1 rounded-full text-xs font-semibold', icon: XCircle },
 };
 
 export default function DocumentsPage() {
-  const [projects, setProjects] = useState<any[]>([]);
-  const [selectedProject, setSelectedProject] = useState('');
   const [documents, setDocuments] = useState<any[]>([]);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
-  useEffect(() => {
-    apiClient<any>('/thesis').then((res) => {
-      setProjects(res.data || []);
-      if (res.data?.[0]) setSelectedProject(res.data[0].id);
-    });
+  const fetchDocuments = useCallback(() => {
+    apiClient<any>('/documents')
+      .then((res) => setDocuments(res.data || []))
+      .catch((err) => console.error('Error fetching documents:', err));
   }, []);
 
   useEffect(() => {
-    if (selectedProject) {
-      apiClient<any>(`/documents/project/${selectedProject}`).then((res) => setDocuments(res.data || []));
-    }
-  }, [selectedProject]);
+    fetchDocuments();
+  }, [fetchDocuments]);
+
+  // Polling silencioso si hay algún documento procesándose
+  useEffect(() => {
+    const hasProcessing = documents.some(
+      (doc) =>
+        doc.status === 'UPLOADED' ||
+        doc.status === 'EXTRACTING' ||
+        doc.status === 'VECTORIZING' ||
+        doc.status === 'ANALYZING'
+    );
+
+    if (!hasProcessing) return;
+
+    const interval = setInterval(() => {
+      apiClient<any>('/documents')
+        .then((res) => {
+          setDocuments(res.data || []);
+        })
+        .catch((err) => {
+          console.error('Error polling documents:', err);
+          const isUnauthorized = 
+            err.message?.includes('401') || 
+            err.message?.toLowerCase().includes('unauthorized') ||
+            err.message?.toLowerCase().includes('token');
+          if (isUnauthorized) {
+            clearInterval(interval);
+          }
+        });
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [documents]);
 
   const handleUpload = useCallback(async (files: FileList | null) => {
-    if (!files || !selectedProject) return;
+    if (!files) return;
     setUploading(true);
     try {
-      for (const file of Array.from(files)) {
-        await uploadFile(`/documents/upload/${selectedProject}`, file);
-      }
-      const res = await apiClient<any>(`/documents/project/${selectedProject}`);
-      setDocuments(res.data || []);
+      const uploadPromises = Array.from(files).map(async (file) => {
+        try {
+          await uploadFile('/thesis', file);
+        } catch (err: any) {
+          console.error(`Error al subir ${file.name}:`, err);
+          alert(`No se pudo subir ${file.name}: ${err.message}`);
+        }
+      });
+      await Promise.all(uploadPromises);
+      fetchDocuments();
     } catch (err: any) {
-      alert(err.message);
+      console.error(err);
     } finally {
       setUploading(false);
     }
-  }, [selectedProject]);
+  }, [fetchDocuments]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -57,21 +90,13 @@ export default function DocumentsPage() {
         <p className="text-gray-500 dark:text-gray-400 mt-1">Sube y revisa tus avances de tesis</p>
       </div>
 
-      {/* Project selector */}
-      <div className="glass-card p-4">
-        <label className="block text-sm font-medium mb-2">Seleccionar Proyecto</label>
-        <select className="input-field" value={selectedProject} onChange={(e) => setSelectedProject(e.target.value)}>
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
-        </select>
-      </div>
-
       {/* Upload zone */}
       <div className={`glass-card p-8 border-2 border-dashed transition-all duration-200 cursor-pointer text-center ${dragOver ? 'border-primary-500 bg-primary-50/50 dark:bg-primary-900/20' : 'border-surface-200 dark:border-surface-700'}`}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => { e.preventDefault(); setDragOver(false); handleUpload(e.dataTransfer.files); }}
         onClick={() => document.getElementById('file-input')?.click()}>
-        <input id="file-input" type="file" className="hidden" accept=".pdf,.docx,.doc" onChange={(e) => handleUpload(e.target.files)} />
+        <input id="file-input" type="file" className="hidden" accept=".pdf,.docx,.doc" multiple onChange={(e) => handleUpload(e.target.files)} />
         {uploading ? (
           <div className="w-10 h-10 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin mx-auto" />
         ) : (

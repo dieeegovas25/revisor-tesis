@@ -29,6 +29,15 @@ const redisConnection = new IORedis({
   maxRetriesPerRequest: null,
 });
 
+// Forzar la política de evicción noeviction para BullMQ
+redisConnection.config('SET', 'maxmemory-policy', 'noeviction')
+  .then(() => {
+    console.log('✅ Política de evicción de Redis configurada a: noeviction');
+  })
+  .catch((err) => {
+    console.warn('⚠️ No se pudo configurar la política de evicción de Redis vía código:', err.message);
+  });
+
 // ─── Arranque de Workers ────────────────────────────────────
 
 async function main() {

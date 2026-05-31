@@ -14,7 +14,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
   VECTORIZING: { label: 'Vectorizando', color: 'badge-minor', icon: Clock },
   ANALYZING: { label: 'Analizando IA', color: 'badge-major', icon: Clock },
   REVIEWED: { label: 'Revisado', color: 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 px-3 py-1 rounded-full text-xs font-semibold', icon: CheckCircle2 },
-  ERROR: { label: 'Error', color: 'badge-critical', icon: XCircle },
+  ERROR: { label: 'Error en el Análisis', color: 'text-rose-600 bg-rose-100 dark:bg-rose-900/30 dark:text-rose-400 px-3 py-1 rounded-full text-xs font-semibold', icon: XCircle },
+  FAILED: { label: 'Error en el Análisis', color: 'text-rose-600 bg-rose-100 dark:bg-rose-900/30 dark:text-rose-400 px-3 py-1 rounded-full text-xs font-semibold', icon: XCircle },
 };
 
 type TabId = 'revision' | 'plagiarism' | 'citations';
@@ -125,20 +126,93 @@ export default function DocumentDetailPage() {
   };
 
   useEffect(() => {
-    if (params.id) {
-      setLoading(true);
-      apiClient<any>(`/documents/${params.id}`)
-        .then((res) => {
-          setDoc(res.data);
-          console.log("📦 DATOS DEL BACKEND:", res.data);
-        })
-        .catch((err) => {
-          console.error(err);
-        })
-        .finally(() => {
+    if (!params.id) return;
+
+    let isMounted = true;
+    let intervalId: NodeJS.Timeout | null = null;
+
+    const startPolling = () => {
+      if (intervalId) return;
+      intervalId = setInterval(() => {
+        fetchDocument(false);
+      }, 3000);
+    };
+
+    const stopPolling = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    const fetchDocument = async (isFirstLoad = false) => {
+      if (isFirstLoad) setLoading(true);
+      try {
+        const res = await apiClient<any>(`/documents/${params.id}`);
+        if (!isMounted) return;
+
+        const currentDoc = res.data;
+        setDoc(currentDoc);
+
+        const isTerminalState = 
+          currentDoc.status === 'REVIEWED' || 
+          currentDoc.status === 'ERROR' || 
+          currentDoc.status === 'COMPLETED' || 
+          currentDoc.status === 'FAILED';
+
+        if (isTerminalState) {
+          stopPolling();
+        }
+      } catch (err: any) {
+        if (!isMounted) return;
+        console.error("Error polling document:", err);
+
+        const isUnauthorized = 
+          err.message?.includes('401') || 
+          err.message?.toLowerCase().includes('unauthorized') ||
+          err.message?.toLowerCase().includes('token');
+
+        if (isUnauthorized) {
+          stopPolling();
+        }
+      } finally {
+        if (isFirstLoad && isMounted) {
           setLoading(false);
-        });
-    }
+        }
+      }
+    };
+
+    const init = async () => {
+      setLoading(true);
+      try {
+        const res = await apiClient<any>(`/documents/${params.id}`);
+        if (!isMounted) return;
+
+        const currentDoc = res.data;
+        setDoc(currentDoc);
+
+        const isTerminalState = 
+          currentDoc.status === 'REVIEWED' || 
+          currentDoc.status === 'ERROR' || 
+          currentDoc.status === 'COMPLETED' || 
+          currentDoc.status === 'FAILED';
+
+        if (!isTerminalState) {
+          startPolling();
+        }
+      } catch (err) {
+        if (isMounted) console.error("Error fetching initial document:", err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    init();
+
+    return () => {
+      isMounted = false;
+      stopPolling();
+    };
   }, [params.id]);
 
   if (loading) {
@@ -316,7 +390,11 @@ export default function DocumentDetailPage() {
                 })}
               </div>
             ) : (
-              <p className="text-gray-500">No se han reportado hallazgos de revisión o el análisis está en curso.</p>
+              <p className="text-gray-500">
+                {doc.status === 'ERROR' || doc.status === 'FAILED'
+                  ? 'El análisis de este documento falló.'
+                  : 'No se han reportado hallazgos de revisión o el análisis está en curso.'}
+              </p>
             )}
           </div>
         )}
@@ -342,7 +420,21 @@ export default function DocumentDetailPage() {
                 ))}
               </div>
             ) : (
-              <p className="text-gray-500">No se detectaron similitudes significativas o el análisis está en curso.</p>
+              <div className="mt-4">
+                {doc.status === 'ERROR' || doc.status === 'FAILED' ? (
+                  <p className="text-gray-500">El análisis de este documento falló.</p>
+                ) : doc.status === 'REVIEWED' || doc.status === 'COMPLETED' ? (
+                  <div className="flex items-center gap-3 p-4 bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-900/30 rounded-xl text-emerald-800 dark:text-emerald-400">
+                    <CheckCircle2 className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+                    <div>
+                      <h4 className="font-semibold text-sm">0 Alertas de Similitud</h4>
+                      <p className="text-xs text-emerald-600 dark:text-emerald-500 mt-0.5">No se detectó texto duplicado en la base de datos local.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-gray-500">No se detectaron similitudes significativas o el análisis está en curso.</p>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -363,7 +455,11 @@ export default function DocumentDetailPage() {
                 ))}
               </div>
             ) : (
-              <p className="text-gray-500">No se detectaron referencias bibliográficas en el documento.</p>
+              <p className="text-gray-500">
+                {doc.status === 'ERROR' || doc.status === 'FAILED'
+                  ? 'El análisis de este documento falló.'
+                  : 'No se detectaron referencias bibliográficas en el documento.'}
+              </p>
             )}
           </div>
         )}
