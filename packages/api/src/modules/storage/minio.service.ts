@@ -1,91 +1,34 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as Minio from 'minio';
-import { Readable } from 'stream';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 @Injectable()
-export class MinioService implements OnModuleInit {
-  // Añadimos '!' para decirle a TypeScript: "Confía en mí, se asignarán después"
-  private client!: Minio.Client;
-  private bucketDocuments!: string;
-  private bucketPatterns!: string;
+export class MinioService {
+  private supabase: SupabaseClient;
 
   constructor(private config: ConfigService) {
-    const endpoint = this.config.get('MINIO_ENDPOINT', 'localhost');
+    const url = this.config.get<string>('SUPABASE_URL');
+    const key = this.config.get<string>('SUPABASE_KEY');
 
-    // Si estamos en producción (no es localhost), saltamos la configuración
-    if (endpoint !== 'localhost') {
-      console.log('🚀 Modo Producción: Saltando inicialización de MinIO');
-      return;
+    if (!url || !key) {
+      throw new Error('Variables de entorno de Supabase no configuradas');
     }
 
-    // Solo inicializamos si estamos en local
-    this.client = new Minio.Client({
-      endPoint: endpoint,
-      port: parseInt(this.config.get('MINIO_PORT', '9000'), 10),
-      useSSL: this.config.get('MINIO_USE_SSL', 'false') === 'true',
-      accessKey: this.config.get('MINIO_ACCESS_KEY', 'minioadmin'),
-      secretKey: this.config.get('MINIO_SECRET_KEY', 'minio_secret_2025'),
-    });
-
-    this.bucketDocuments = this.config.get('MINIO_BUCKET_DOCUMENTS', 'thesis-documents');
-    this.bucketPatterns = this.config.get('MINIO_BUCKET_PATTERNS', 'thesis-patterns');
+    this.supabase = createClient(url, key);
   }
 
-  async onModuleInit() {
-    // Asegurar que los buckets existen, 
-    //await this.ensureBucket(this.bucketDocuments);
-    //await this.ensureBucket(this.bucketPatterns);
-    console.log('✅ MinIO conectado y buckets verificados');
+  async uploadDocument(fileName: string, buffer: Buffer, mimeType: string): Promise<string> {
+    const filePath = `documents/${Date.now()}-${fileName}`;
+
+    // Subir a Supabase
+    const { data, error } = await this.supabase.storage
+      .from('tesis-files') // El nombre exacto de tu bucket en Supabase
+      .upload(filePath, buffer, {
+        contentType: mimeType,
+      });
+
+    if (error) throw error;
+    return filePath;
   }
 
-  private async ensureBucket(name: string) {
-    const exists = await this.client.bucketExists(name);
-    if (!exists) {
-      await this.client.makeBucket(name);
-    }
-  }
-
-  async uploadDocument(
-    fileName: string,
-    buffer: Buffer,
-    mimeType: string,
-  ): Promise<string> {
-    // 1. Protección: Si no estamos en local, no intentamos subir a MinIO
-    if (!this.client) {
-      console.warn('⚠️ Intento de subir archivo saltado: MinIO no está configurado en este entorno.');
-      // Opcional: Podrías lanzar una excepción o retornar un ID simulado
-      throw new Error('El servicio de almacenamiento no está disponible en este entorno.');
-    }
-
-    // 2. Ejecución normal
-    const key = `documents/${Date.now()}-${fileName}`;
-    await this.client.putObject(this.bucketDocuments, key, buffer, buffer.length, {
-      'Content-Type': mimeType,
-    });
-
-    return key;
-  }
-
-  async getDocument(key: string): Promise<Buffer> {
-    const stream = await this.client.getObject(this.bucketDocuments, key);
-    return this.streamToBuffer(stream);
-  }
-
-  async getPresignedUrl(key: string, expirySeconds = 3600): Promise<string> {
-    return this.client.presignedGetObject(this.bucketDocuments, key, expirySeconds);
-  }
-
-  async deleteDocument(key: string): Promise<void> {
-    await this.client.removeObject(this.bucketDocuments, key);
-  }
-
-  private streamToBuffer(stream: Readable): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const chunks: Buffer[] = [];
-      stream.on('data', (chunk) => chunks.push(chunk));
-      stream.on('end', () => resolve(Buffer.concat(chunks)));
-      stream.on('error', reject);
-    });
-  }
 }
