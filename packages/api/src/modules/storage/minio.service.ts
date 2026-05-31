@@ -31,4 +31,14 @@ export class MinioService {
     return filePath;
   }
 
+  async getPresignedUrl(key: string): Promise<string> {
+    // Supabase maneja los archivos públicos de forma distinta
+    // Si tu bucket es público, simplemente devolvemos la URL pública
+    const { data } = this.supabase.storage
+      .from('tesis-files')
+      .getPublicUrl(key);
+
+    return data.publicUrl;
+  }
+
 }
