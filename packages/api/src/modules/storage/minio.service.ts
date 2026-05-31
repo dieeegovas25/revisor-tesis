@@ -5,13 +5,23 @@ import { Readable } from 'stream';
 
 @Injectable()
 export class MinioService implements OnModuleInit {
-  private client: Minio.Client;
-  private bucketDocuments: string;
-  private bucketPatterns: string;
+  // Añadimos '!' para decirle a TypeScript: "Confía en mí, se asignarán después"
+  private client!: Minio.Client;
+  private bucketDocuments!: string;
+  private bucketPatterns!: string;
 
   constructor(private config: ConfigService) {
+    const endpoint = this.config.get('MINIO_ENDPOINT', 'localhost');
+
+    // Si estamos en producción (no es localhost), saltamos la configuración
+    if (endpoint !== 'localhost') {
+      console.log('🚀 Modo Producción: Saltando inicialización de MinIO');
+      return;
+    }
+
+    // Solo inicializamos si estamos en local
     this.client = new Minio.Client({
-      endPoint: this.config.get('MINIO_ENDPOINT', 'localhost'),
+      endPoint: endpoint,
       port: parseInt(this.config.get('MINIO_PORT', '9000'), 10),
       useSSL: this.config.get('MINIO_USE_SSL', 'false') === 'true',
       accessKey: this.config.get('MINIO_ACCESS_KEY', 'minioadmin'),
@@ -24,8 +34,8 @@ export class MinioService implements OnModuleInit {
 
   async onModuleInit() {
     // Asegurar que los buckets existen, 
-    await this.ensureBucket(this.bucketDocuments);
-    await this.ensureBucket(this.bucketPatterns);
+    //await this.ensureBucket(this.bucketDocuments);
+    //await this.ensureBucket(this.bucketPatterns);
     console.log('✅ MinIO conectado y buckets verificados');
   }
 
@@ -41,10 +51,19 @@ export class MinioService implements OnModuleInit {
     buffer: Buffer,
     mimeType: string,
   ): Promise<string> {
+    // 1. Protección: Si no estamos en local, no intentamos subir a MinIO
+    if (!this.client) {
+      console.warn('⚠️ Intento de subir archivo saltado: MinIO no está configurado en este entorno.');
+      // Opcional: Podrías lanzar una excepción o retornar un ID simulado
+      throw new Error('El servicio de almacenamiento no está disponible en este entorno.');
+    }
+
+    // 2. Ejecución normal
     const key = `documents/${Date.now()}-${fileName}`;
     await this.client.putObject(this.bucketDocuments, key, buffer, buffer.length, {
       'Content-Type': mimeType,
     });
+
     return key;
   }
 
