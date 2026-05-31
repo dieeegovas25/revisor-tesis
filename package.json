@@ -19,6 +19,7 @@
     "docker:logs": "docker compose --env-file .env -f docker/docker-compose.yml logs -f"
   },
   "devDependencies": {
+    "@nestjs/cli": "^11.0.21",
     "turbo": "^2.5.0",
     "typescript": "^5.7.0"
   },
