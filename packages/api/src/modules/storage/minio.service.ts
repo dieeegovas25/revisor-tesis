@@ -23,7 +23,7 @@ export class MinioService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    // Asegurar que los buckets existen
+    // Asegurar que los buckets existen, 
     await this.ensureBucket(this.bucketDocuments);
     await this.ensureBucket(this.bucketPatterns);
     console.log('✅ MinIO conectado y buckets verificados');
