@@ -25,6 +25,11 @@
   },
   "dependencies": {
     "jspdf": "^4.2.1",
-    "jspdf-autotable": "^5.0.7"
+    "jspdf-autotable": "^5.0.7",
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/core": "^10.0.0",
+    "@nestjs/config": "^3.0.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "minio": "^7.1.3"
   }
 }
