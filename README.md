@@ -382,6 +382,69 @@ El schema incluye **12 modelos** principales:
 - `OrcidProfile` — Perfiles ORCID vinculados
 
 ---
+## Diagrama de datos
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                       DIAGRAMA DE ENTIDAD-RELACIÓN                                    │
+│                                                                                                       │
+│  ┌───────────────────────┐              ┌───────────────────────┐             ┌────────────────────┐  │
+│  │    especialidades     │              │       usuarios        │             │    consultas_faq   │  │
+│  ├───────────────────────┤              ├───────────────────────┤             ├────────────────────┤  │
+│  │ int      id (PK)      │              │ int       id (PK)     │             │ int     id (PK)    │  │
+│  │ varchar  nombre       │              │ varchar   n_usuario   │(UNIQUE)     │ varchar pregunta   │  │
+│  │ text     descripcion  │              │ varchar   pass_hash   │             │ text    respuesta  │  │
+│  └──────────┬────────────┘              │ varchar   rol         │             │ boolean activo     │  │
+│             │                           │ boolean   activo      │             └────────────────────┘  │
+│             │ tiene                     │ timestamp creado_en   │                                     │
+│             ▼                           └───────────┬───────────┘                                     │
+│  ┌───────────────────────┐                          │                                                 │
+│  │        medicos        │                          │ registra                                        │
+│  ├───────────────────────┤                          ▼                                                 │
+│  │ int      id (PK)      │              ┌───────────────────────┐                                     │
+│  │ varchar  nombres      │              │   bitacora_auditoria  │                                     │
+│  │ varchar  apellidos    │              ├───────────────────────┤                                     │
+│  │ int      id_espec.(FK)│              │ int       id (PK)     │                                     │
+│  │ boolean  activo       │              │ int       id_user(FK) │                                     │
+│  └──────────┬────────────┘              │ varchar   accion      │                                     │
+│             │                           │ text      detalle     │                                     │
+│             │ atiende                   │ timestamp fecha_hora  │                                     │
+│             ▼                           └───────────────────────┘                                     │
+│  ┌───────────────────────┐              ┌───────────────────────┐                                     │
+│  │         citas         │              │       pacientes       │                                     │
+│  ├───────────────────────┤              ├───────────────────────┤                                     │
+│  │ int      id (PK)      │   agenda     │ int       id (PK)     │                                     │
+│  │ int      id_pac.(FK)  │◄────────────┤ varchar   dni         │(UNIQUE)                             │
+│  │ int      id_med.(FK)  │             │ varchar   nombres     │                                     │
+│  │ timestamp fecha_hora  │             │ varchar   apellidos   │                                     │
+│  │ varchar  estado       │             │ varchar   telefono    │                                     │
+│  │ timestamp creado_en   │             │ date      f_nacimiento│                                     │
+│  └───────────────────────┘             │ timestamp creado_en   │                                     │
+│                                         └───────────┬───────────┘                                     │
+│                                                     │                                                 │
+│                                                     │ inicia                                          │
+│                                                     ▼                                                 │
+│                                         ┌───────────────────────┐                                     │
+│                                         │     conversaciones    │                                     │
+│                                         ├───────────────────────┤                                     │
+│                                         │ int       id (PK)     │                                     │
+│                                         │ int       id_pac.(FK) │                                     │
+│                                         │ timestamp fecha_inicio│                                     │
+│                                         │ varchar   estado      │                                     │
+│                                         └───────────┬───────────┘                                     │
+│                                                     │                                                 │
+│                                                     │ contiene                                        │
+│                                                     ▼                                                 │
+│                                         ┌───────────────────────┐                                     │
+│                                         │       mensajes        │                                     │
+│                                         ├───────────────────────┤                                     │
+│                                         │ int       id (PK)     │                                     │
+│                                         │ int       id_conv.(FK)│                                     │
+│                                         │ varchar   remitente   │                                     │
+│                                         │ text      contenido   │                                     │
+│                                         │ timestamp fecha_hora  │                                     │
+│                                         └───────────────────────┘                                     │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
+---
+
 
 ## 🤝 Contribución
 
