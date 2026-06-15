@@ -18,7 +18,8 @@ export class GeneratorController {
   @Post('generate')
   @HttpCode(HttpStatus.CREATED)
   async generate(@Body() dto: GenerateThesisDto) {
-    this.logger.log(`Iniciando solicitud de generación de tesis para: "${dto.title}"`);
+    const productLabel = dto.productType === 'ARTICLE' ? 'Artículo Científico' : 'Proyecto de Tesis';
+    this.logger.log(`Iniciando solicitud de generación de ${productLabel} para: "${dto.title}"`);
 
     // 1. Crear el borrador de tesis en la base de datos con estado PENDING
     const thesis = await this.prisma.thesis.create({
@@ -28,11 +29,12 @@ export class GeneratorController {
         campus: dto.campus,
         authorName: dto.authorName,
         advisorName: dto.advisorName,
+        productType: dto.productType,
         status: 'PENDING',
       },
     });
 
-    this.logger.log(`Tesis registrada en BD con ID: ${thesis.id} en estado PENDING`);
+    this.logger.log(`${productLabel} registrado en BD con ID: ${thesis.id} en estado PENDING`);
 
     // 2. Encolar el trabajo en BullMQ usando el thesis.id como el jobId de BullMQ
     const job = await this.generatorQueue.add(
@@ -56,7 +58,7 @@ export class GeneratorController {
     // 3. Retornar mensaje de éxito con el ID para monitoreo
     return {
       success: true,
-      message: 'Proyecto de tesis encolado correctamente para su generación automática en segundo plano.',
+      message: `${productLabel} encolado correctamente para su generación automática en segundo plano.`,
       thesisId: thesis.id,
       status: thesis.status,
     };
@@ -64,16 +66,17 @@ export class GeneratorController {
 
   @Get(':id')
   async getStatus(@Param('id') id: string) {
-    this.logger.log(`Consultando estado de la tesis: ${id}`);
-
     // 1. Obtener la tesis de la base de datos
     const thesis = await this.prisma.thesis.findUnique({
       where: { id },
     });
 
     if (!thesis) {
-      throw new NotFoundException('Proyecto de tesis no encontrado.');
+      throw new NotFoundException('Documento no encontrado.');
     }
+
+    const productLabel = thesis.productType === 'ARTICLE' ? 'Artículo Científico' : 'Proyecto de Tesis';
+    this.logger.log(`Consultando estado de ${productLabel}: ${id}`);
 
     // 2. Obtener el progreso del trabajo de BullMQ
     let progress = 0;
@@ -85,7 +88,7 @@ export class GeneratorController {
         progress = 100;
       }
     } catch (err: any) {
-      this.logger.error(`Error al obtener progreso de BullMQ para ${id}: ${err.message}`);
+      this.logger.error(`Error al obtener progreso de BullMQ para ${productLabel} ${id}: ${err.message}`);
     }
 
     return {
@@ -93,6 +96,7 @@ export class GeneratorController {
       title: thesis.title,
       status: thesis.status,
       progress,
+      productType: thesis.productType,
       structuredContent: thesis.structuredContent ? JSON.parse(thesis.structuredContent) : null,
       createdAt: thesis.createdAt,
     };

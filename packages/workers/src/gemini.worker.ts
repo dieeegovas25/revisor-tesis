@@ -23,6 +23,8 @@ const Logger = {
   }
 };
 
+const exhaustedModels = new Set<string>();
+
 export function startGeminiWorker(prisma: PrismaClient, connection: IORedis) {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
   const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
@@ -86,14 +88,79 @@ export function startGeminiWorker(prisma: PrismaClient, connection: IORedis) {
           ? submission.extractedText.substring(0, maxChars) + '\n\n[... documento truncado por límite de tokens ...]'
           : submission.extractedText;
 
-        // 4. Construir prompt y llamar a Gemini
-        const model = genAI.getGenerativeModel({ model: modelName });
         const prompt = GEMINI_PROMPTS.REVIEW_PROMPT(patternStructure, documentText);
+        const models = [
+          process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+          'gemini-2.5-flash',
+          'gemini-flash-latest',
+          'gemini-2.5-pro',
+          'gemini-pro-latest'
+        ];
+        
+        // Filtrar modelos ya marcados como agotados
+        const activeModels = models.filter(m => !exhaustedModels.has(m));
+        const uniqueModels = Array.from(new Set(activeModels.length > 0 ? activeModels : models));
 
-        const result = await model.generateContent([
-          { text: GEMINI_PROMPTS.SYSTEM_ROLE },
-          { text: prompt },
-        ]);
+        let result: any;
+        let lastErr: any;
+        
+        for (const mName of uniqueModels) {
+          let retries = 3;
+          let delay = 10000;
+          while (retries > 0) {
+            try {
+              Logger.log(`[Gemini Worker] Intentando revisión con modelo: ${mName} (Intentos restantes: ${retries})`);
+              const model = genAI.getGenerativeModel({ model: mName });
+              result = await model.generateContent([
+                { text: GEMINI_PROMPTS.SYSTEM_ROLE },
+                { text: prompt },
+              ]);
+              if (result) {
+                // Eliminar de agotados en caso de éxito
+                exhaustedModels.delete(mName);
+                break;
+              }
+            } catch (err: any) {
+              lastErr = err;
+              const errMsg = err.message || '';
+              const isRetryable = errMsg.includes('429') || 
+                                  errMsg.includes('Too Many Requests') || 
+                                  errMsg.toLowerCase().includes('quota') ||
+                                  errMsg.toLowerCase().includes('limit') ||
+                                  errMsg.includes('RESOURCE_EXHAUSTED') ||
+                                  errMsg.includes('503') ||
+                                  errMsg.toLowerCase().includes('service unavailable') ||
+                                  errMsg.toLowerCase().includes('high demand') ||
+                                  errMsg.includes('500');
+
+              if (isRetryable) {
+                // Si es cuota de peticiones diarias agotada
+                const isDailyOrHardLimit = errMsg.includes('GenerateRequestsPerDay') || 
+                                           errMsg.includes('limit: 20') ||
+                                           (errMsg.toLowerCase().includes('quota exceeded') && !errMsg.toLowerCase().includes('minute'));
+                
+                if (isDailyOrHardLimit) {
+                  Logger.error(`[Gemini Worker] Cuota diaria o límite duro alcanzado para ${mName}. Marcando como AGOTADO.`);
+                  exhaustedModels.add(mName);
+                  break; // Salta los reintentos de este modelo de inmediato
+                }
+
+                Logger.warn(`⚠️ [Gemini Worker Retryable] Modelo ${mName} reportó error temporal/cuota: ${errMsg}. Esperando ${delay / 1000}s...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                retries--;
+                delay *= 2;
+              } else {
+                Logger.error(`Error no reintentable en Gemini Worker con modelo ${mName}: ${errMsg}`);
+                break;
+              }
+            }
+          }
+          if (result) break;
+        }
+
+        if (!result) {
+          throw lastErr || new Error("Todos los modelos de revisión fallaron");
+        }
 
         const responseText = result.response.text();
 
@@ -107,12 +174,25 @@ export function startGeminiWorker(prisma: PrismaClient, connection: IORedis) {
 
         // 6. Guardar hallazgos en MySQL
         if (review.findings && Array.isArray(review.findings)) {
+          const VALID_CATEGORIES = ['STRUCTURE', 'CONTENT', 'FORMAT', 'CITATION', 'GRAMMAR', 'COHERENCE'];
+          const VALID_SEVERITIES = ['CRITICAL', 'MAJOR', 'MINOR', 'INFO'];
+
           for (const finding of review.findings) {
+            let cat = String(finding.category || 'CONTENT').toUpperCase().trim();
+            if (!VALID_CATEGORIES.includes(cat)) {
+              cat = 'CONTENT';
+            }
+
+            let sev = String(finding.severity || 'MINOR').toUpperCase().trim();
+            if (!VALID_SEVERITIES.includes(sev)) {
+              sev = 'MINOR';
+            }
+
             await prisma.aiReviewFinding.create({
               data: {
                 submissionId,
-                category: finding.category || 'CONTENT',
-                severity: finding.severity || 'MINOR',
+                category: cat as any,
+                severity: sev as any,
                 title: finding.title || 'Observación',
                 description: finding.description || '',
                 instruction: finding.instruction || '',
@@ -164,13 +244,16 @@ export function startGeminiWorker(prisma: PrismaClient, connection: IORedis) {
         return { findings: review.findings?.length || 0, score: review.overallScore };
 
       } catch (error: any) {
-        const isQuotaError = error.message?.includes('429') || 
-                             error.message?.includes('RESOURCE_EXHAUSTED') ||
-                             error.message?.toLowerCase().includes('quota exceeded') ||
-                             error.message?.toLowerCase().includes('too many requests');
+        const isTemporaryError = error.message?.includes('429') || 
+                                 error.message?.includes('503') ||
+                                 error.message?.includes('RESOURCE_EXHAUSTED') ||
+                                 error.message?.toLowerCase().includes('quota exceeded') ||
+                                 error.message?.toLowerCase().includes('too many requests') ||
+                                 error.message?.toLowerCase().includes('service unavailable') ||
+                                 error.message?.toLowerCase().includes('high demand');
 
-        if (isQuotaError) {
-          Logger.warn(`Límite de cuota / Rate limit (429) detectado en Gemini para el documento ${submissionId}. Se reintentará con backoff exponencial. Detalles: ${error.message}`);
+        if (isTemporaryError) {
+          Logger.warn(`Error temporal/cuota detectado en Gemini para el documento ${submissionId}. Se reintentará con backoff exponencial. Detalles: ${error.message}`);
           await prisma.aiReviewJob.updateMany({
             where: { submissionId, jobType: 'gemini' },
             data: { status: 'RATE_LIMITED', lastError: error.message },

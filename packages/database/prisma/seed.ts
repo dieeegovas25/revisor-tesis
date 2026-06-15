@@ -65,6 +65,42 @@ async function main() {
     },
   });
 
+  const student1 = await prisma.user.upsert({
+    where: { email: 'cojal@universidad.edu.pe' },
+    update: {},
+    create: {
+      email: 'cojal@universidad.edu.pe',
+      passwordHash: hashPassword('student123'),
+      firstName: 'Angel David',
+      lastName: 'Cojal Huangal',
+      role: UserRole.STUDENT,
+    },
+  });
+
+  const student2 = await prisma.user.upsert({
+    where: { email: 'vasquez@universidad.edu.pe' },
+    update: {},
+    create: {
+      email: 'vasquez@universidad.edu.pe',
+      passwordHash: hashPassword('student123'),
+      firstName: 'Diego Manuel',
+      lastName: 'Vásquez Mejía',
+      role: UserRole.STUDENT,
+    },
+  });
+
+  const advisor1 = await prisma.user.upsert({
+    where: { email: 'santos@universidad.edu.pe' },
+    update: {},
+    create: {
+      email: 'santos@universidad.edu.pe',
+      passwordHash: hashPassword('advisor123'),
+      firstName: 'Juan Pedro',
+      lastName: 'Santos Fernandez',
+      role: UserRole.ADVISOR,
+    },
+  });
+
   // ─── Documento Patrón (Template por defecto) ────────────
   const pattern = await prisma.documentPattern.upsert({
     where: { id: 'default-pattern-001' },

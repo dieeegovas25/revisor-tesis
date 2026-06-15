@@ -57,6 +57,13 @@ export class GenerateThesisDto {
   })
   campus!: string;
 
+  @IsNotEmpty({ message: 'El tipo de producto académico es obligatorio.' })
+  @IsString({ message: 'El tipo de producto académico debe ser una cadena de texto.' })
+  @IsIn(['THESIS', 'ARTICLE'], {
+    message: 'El tipo de producto académico debe ser "THESIS" o "ARTICLE".',
+  })
+  productType!: 'THESIS' | 'ARTICLE';
+
   @IsNotEmpty({ message: 'El nombre del autor es obligatorio.' })
   @IsString({ message: 'El nombre del autor debe ser una de cadena de texto.' })
   authorName!: string;

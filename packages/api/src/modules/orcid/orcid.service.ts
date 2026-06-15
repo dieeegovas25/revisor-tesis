@@ -29,8 +29,19 @@ export class OrcidService {
                 throw new HttpException('El perfil ORCID no tiene publicaciones públicas para evaluar.', HttpStatus.BAD_REQUEST);
             }
 
-            // 2. Preguntarle a Gemini (IA Evaluadora)
-            const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+            // 2. Preguntarle a Gemini (IA Evaluadora) con resiliencia de modelos
+            let aiResult: any;
+            let lastErr: any;
+            const modelsToTry = [
+              process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+              'gemini-2.5-flash',
+              'gemini-2.5-flash-lite',
+              'gemini-3.1-flash-lite',
+              'gemini-flash-latest',
+              'gemini-flash-lite-latest'
+            ];
+            const uniqueModels = Array.from(new Set(modelsToTry));
+
             const prompt = `
         Actúa como un comité académico universitario muy estricto.
         Tema de tesis a supervisar: "${thesisTopic}"
@@ -46,7 +57,43 @@ export class OrcidService {
         }
       `;
 
-            const aiResult = await model.generateContent(prompt);
+            for (const mName of uniqueModels) {
+              let retries = 3;
+              let delay = 10000;
+              while (retries > 0) {
+                try {
+                  const model = this.genAI.getGenerativeModel({ model: mName });
+                  aiResult = await model.generateContent(prompt);
+                  if (aiResult) break;
+                } catch (err: any) {
+                  lastErr = err;
+                  const errMsg = err.message || '';
+                  const isRetryable = errMsg.includes('429') || 
+                                      errMsg.includes('Too Many Requests') || 
+                                      errMsg.toLowerCase().includes('quota') ||
+                                      errMsg.toLowerCase().includes('limit') ||
+                                      errMsg.includes('RESOURCE_EXHAUSTED') ||
+                                      errMsg.includes('503') ||
+                                      errMsg.toLowerCase().includes('service unavailable') ||
+                                      errMsg.toLowerCase().includes('high demand') ||
+                                      errMsg.includes('500');
+
+                  if (isRetryable) {
+                    console.warn(`⚠️ [ORCID Retryable] Modelo ${mName} reportó error temporal/cuota: ${errMsg}. Esperando ${delay / 1000}s...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    retries--;
+                    delay *= 2;
+                  } else {
+                    console.error(`Error no reintentable en ORCID con modelo ${mName}: ${errMsg}`);
+                    break;
+                  }
+                }
+              }
+              if (aiResult) break;
+            }
+
+            if (!aiResult) throw lastErr || new Error('Todos los modelos de evaluación ORCID fallaron');
+
             const textResponse = aiResult.response.text().replace(/```json/g, '').replace(/```/g, '');
             const evaluation = JSON.parse(textResponse);
 

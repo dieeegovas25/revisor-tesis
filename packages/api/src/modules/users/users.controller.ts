@@ -19,6 +19,12 @@ import { UserRole } from '@prisma/client';
 export class UsersController {
   constructor(private usersService: UsersService) {}
 
+  @Get('selector')
+  async findForSelector(@Query('role') role?: UserRole) {
+    const result = await this.usersService.findAll(role, 1, 100);
+    return { success: true, data: result.data };
+  }
+
   @Get()
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'COORDINATOR')

@@ -8,6 +8,7 @@ import {
   BookCheck, Users, Bell, LogOut, Menu, X, GraduationCap, Moon, Sun,
   BarChart, Settings, ListPlus, Award, Sparkles
 } from 'lucide-react';
+import ChatWidget from '@/components/chatbot/ChatWidget';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['ADMIN', 'COORDINATOR', 'ADVISOR', 'STUDENT'] },
@@ -35,14 +36,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const stored = localStorage.getItem('user');
     if (!stored) { router.push('/'); return; }
     setUser(JSON.parse(stored));
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    setDark(prefersDark);
-    if (prefersDark) document.documentElement.classList.add('dark');
+    
+    const savedTheme = localStorage.getItem('theme');
+    const isDark = savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    setDark(isDark);
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
   }, [router]);
 
   const toggleDark = () => {
-    setDark(!dark);
-    document.documentElement.classList.toggle('dark');
+    const nextDark = !dark;
+    setDark(nextDark);
+    if (nextDark) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
   };
 
   const handleLogout = () => {
@@ -134,6 +148,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="flex-1 overflow-y-auto p-6 lg:p-8">
           {children}
         </div>
+        
+        {/* Chatbot Flotante */}
+        <ChatWidget />
       </main>
     </div>
   );

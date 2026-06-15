@@ -16,6 +16,7 @@ import { StorageModule } from './modules/storage/storage.module';
 import { OrcidController } from './modules/orcid/orcid.controller';
 import { OrcidService } from './modules/orcid/orcid.service';
 import { GeneratorModule } from './modules/generator/generator.module';
+import { ChatbotModule } from './modules/chatbot/chatbot.module';
 
 
 @Module({
@@ -51,6 +52,7 @@ import { GeneratorModule } from './modules/generator/generator.module';
     DashboardModule,
     NotificationsModule,
     GeneratorModule,
+    ChatbotModule,
   ],
   // Registramos el controlador para abrir la ruta y el servicio para la lógica
   controllers: [

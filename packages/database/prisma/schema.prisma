@@ -356,6 +356,7 @@ model Thesis {
   campus            String    @db.VarChar(100)
   authorName        String    @map("author_name") @db.VarChar(300)
   advisorName       String    @map("advisor_name") @db.VarChar(300)
+  productType       String    @default("THESIS") @map("product_type") @db.VarChar(50)
   status            JobStatus @default(PENDING)
   structuredContent String?   @map("structured_content") @db.LongText
   createdAt         DateTime  @default(now()) @map("created_at")

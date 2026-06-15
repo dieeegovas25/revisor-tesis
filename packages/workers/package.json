@@ -16,10 +16,14 @@
     "bullmq": "^5.30.0",
     "dotenv": "^17.4.2",
     "expo-server-sdk": "^3.12.0",
-    "ioredis": "5.10.1"
+    "ioredis": "5.10.1",
+    "nodemailer": "^8.0.10",
+    "pdfkit": "^0.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/nodemailer": "^8.0.0",
+    "@types/pdfkit": "^0.17.6",
     "ts-node": "^10.9.0",
     "typescript": "^5.7.0"
   }

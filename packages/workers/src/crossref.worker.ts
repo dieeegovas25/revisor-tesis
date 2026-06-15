@@ -51,11 +51,60 @@ export function startCrossrefWorker(prisma: PrismaClient, connection: IORedis) {
       });
 
       try {
-        // 1. Extraer citas usando Gemini
-        const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' });
         const refSection = documentText.substring(documentText.length - 8000);
         const prompt = GEMINI_PROMPTS.EXTRACT_CITATIONS(refSection);
-        const result = await model.generateContent(prompt);
+
+        // 1. Extraer citas usando Gemini con resiliencia de modelos
+        let result: any;
+        let lastErr: any;
+        const modelsToTry = [
+          process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+          'gemini-2.5-flash',
+          'gemini-2.5-flash-lite',
+          'gemini-3.1-flash-lite',
+          'gemini-flash-latest',
+          'gemini-flash-lite-latest'
+        ];
+        const uniqueModels = Array.from(new Set(modelsToTry));
+
+        for (const mName of uniqueModels) {
+          let retries = 3;
+          let delay = 10000;
+          while (retries > 0) {
+            try {
+              console.log(`   🤖 [CrossRef] Intentando extraer citas con modelo: ${mName} (Intentos restantes: ${retries})`);
+              const model = genAI.getGenerativeModel({ model: mName });
+              result = await model.generateContent(prompt);
+              if (result) break;
+            } catch (err: any) {
+              lastErr = err;
+              const errMsg = err.message || '';
+              const isRetryable = errMsg.includes('429') || 
+                                  errMsg.includes('Too Many Requests') || 
+                                  errMsg.toLowerCase().includes('quota') ||
+                                  errMsg.toLowerCase().includes('limit') ||
+                                  errMsg.includes('RESOURCE_EXHAUSTED') ||
+                                  errMsg.includes('503') ||
+                                  errMsg.toLowerCase().includes('service unavailable') ||
+                                  errMsg.toLowerCase().includes('high demand') ||
+                                  errMsg.includes('500');
+
+              if (isRetryable) {
+                console.warn(`⚠️ [CrossRef Retryable] Modelo ${mName} reportó error temporal/cuota: ${errMsg}. Esperando ${delay / 1000}s...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                retries--;
+                delay *= 2;
+              } else {
+                console.error(`Error no reintentable en CrossRef con modelo ${mName}: ${errMsg}`);
+                break;
+              }
+            }
+          }
+          if (result) break;
+        }
+
+        if (!result) throw lastErr || new Error('Todos los modelos de extracción de citas fallaron');
+
         const responseText = result.response.text();
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
         if (!jsonMatch) throw new Error('La respuesta de Gemini no contiene JSON válido para citas');
